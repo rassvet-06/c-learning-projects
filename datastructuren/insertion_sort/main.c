@@ -1,21 +1,7 @@
-/* Doubly Linked List (data structure used)
-    Main program to read integers from stdin,
-    insert them into a linked list in sorted order,
-    and print the sorted list to stdout.
-
-    command-line options:
-    -d: sort in descending order
-    -c: combine duplicate values by summing them
-    -o: remove odd values
-    -z: zip two lists by alternating their elements
-
-    functions: 
-    parse_options: parse command-line options
-    print: print the linked list
-    main: main program logic
-*/
+#include <ctype.h>
 #include <getopt.h>
 #include <math.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,12 +11,10 @@
 
 char buf[BUF_SIZE];
 
-/* function: struct config
-   structure to hold command-line options
-*/
 struct config {
     /* You can ignore these options until you implement the
        extra command-line arguments. */
+
     /* Set to 1 if -d is specified, 0 otherwise. */
     int descending_order;
     // Set to 1 if -c is specified, 0 otherwise.
@@ -42,12 +26,8 @@ struct config {
 };
 
 /* function: parse_options
-   parse command-line options and populate config structure
+   parse command-line options
    returns 0 on success, 1 on failure
-
-   cfg: pointer to config structure to populate
-   argc: argument count
-   argv: argument vector
 */
 int parse_options(struct config *cfg, int argc, char *argv[]) {
     memset(cfg, 0, sizeof(struct config));
@@ -74,132 +54,178 @@ int parse_options(struct config *cfg, int argc, char *argv[]) {
     return 0;
 }
 
-/* function: print
-   print the linked list to stdout
-
-    l: pointer to the linked list 
+/* function: comes_first
+   returns 1 if a must come before b in the sorted list
 */
-void print(struct list* l) {
-    if (l == NULL) {
-        printf("No list to print.\n");
-        return;
+static int comes_first(int a, int b, int descending) {
+    if (descending == 1) {
+        if (a > b) {
+            return 1;
+        } else {
+            return 0;
+        }
+    } else {
+        if (a < b) {
+            return 1;
+        } else {
+            return 0;
+        }
+    }
+}
+
+/* function: add_number
+   insert num at its sorted place in l
+   returns 0 on success, 1 on failure
+*/
+static int add_number(struct list *l, int num, int descending) {
+    struct node *n = list_new_node(num);
+    if (!n) {
+        return 1;
     }
 
-    struct node* current = list_head(l);
-    while (current != NULL) {
-        printf("%d\n", list_node_get_value(current));
+    struct node *tail = list_tail(l);
+    if (!tail || !comes_first(num, list_node_get_value(tail), descending)) {
+        return list_add_back(l, n);
+    }
+
+    struct node *current = list_head(l);
+    while (!comes_first(num, list_node_get_value(current), descending)) {
         current = list_next(current);
     }
+    return list_insert_before(l, n, current);
+}
 
-    printf("\n");
+/* function: take_front
+   unlink and return the first node of l
+*/
+static struct node *take_front(struct list *l) {
+    struct node *n = list_head(l);
+    if (n) {
+        list_unlink_node(l, n);
+    }
+    return n;
+}
+
+/* function: combine_pairs
+   -c: add the values pair-wise
+*/
+static void combine_pairs(struct list *l) {
+    size_t length = list_length(l);
+    for (size_t i = 0; i < length; i += 2) {
+        struct node *first = take_front(l);
+        if (i + 1 < length) {
+            struct node *second = take_front(l);
+            int sum = list_node_get_value(first) + list_node_get_value(second);
+            list_node_set_value(first, sum);
+            list_free_node(second);
+        }
+        list_add_back(l, first);
+    }
+}
+
+/* function: remove_odd
+   -o: remove all odd values
+*/
+static void remove_odd(struct list *l) {
+    size_t length = list_length(l);
+    for (size_t i = 0; i < length; i++) {
+        struct node *n = take_front(l);
+        if (list_node_get_value(n) % 2 != 0) {
+            list_free_node(n);
+        } else {
+            list_add_back(l, n);
+        }
+    }
+}
+
+/* function: zip_halves
+   -z: cut l in two halves and zip them together
+   returns 0 on success, 1 on failure
+*/
+static int zip_halves(struct list *l) {
+    size_t length = list_length(l);
+    if (length < 2) {
+        return 0;
+    }
+
+    size_t half = (length + 1) / 2;
+    struct list *second = list_cut_after(l, list_get_ith(l, half - 1));
+    if (!second) {
+        return 1;
+    }
+
+    for (size_t i = 0; i < half; i++) {
+        list_add_back(l, take_front(l));
+        struct node *other = take_front(second);
+        if (other) {
+            list_add_back(l, other);
+        }
+    }
+
+    list_cleanup(second);
+    return 0;
+}
+
+/* function: print_list
+   print every value on its own line
+*/
+static void print_list(const struct list *l) {
+    for (struct node *n = list_head(l); n; n = list_next(n)) {
+        printf("%d\n", list_node_get_value(n));
+    }
 }
 
 /* function: main
    main program logic
-
-   argc: argument count
-   argv: argument vector
-
-   returns 0 on success, 1 on failure
 */
 int main(int argc, char *argv[]) {
-
     struct config cfg;
     if (parse_options(&cfg, argc, argv) != 0) {
-        printf("Error!\n");
         return 1;
     }
 
     struct list *l = list_init();
-    if (l == NULL) {
-        printf("Error!\n");
+    if (!l) {
+        fprintf(stderr, "out of memory\n");
         return 1;
     }
 
-    // read numbers from stdin
+    int num = 0;
+    bool reading = false;
+    int error = 0;
     while (fgets(buf, BUF_SIZE, stdin)) {
-
-        char *ptr = buf;
-
-        // process all numbers in this line
-        while (*ptr != '\0') {
-
-            // read next number
-            char *endptr;
-            int num = strtol(ptr, &endptr, 10);
-
-            // no number found -> stop
-            if (endptr == ptr) {
-                break;
-            }
-
-            // move pointer forward
-            ptr = endptr;
-
-            // skip spaces/tabs
-            while (*ptr == ' ' || *ptr == '\t') {
-                ptr++;
-            }
-
-            // if remove odd selected AND number is odd -> skip
-            if (cfg.remove_odd && (num % 2 != 0)) {
-                continue;
-            }
-
-            // new node
-            struct node *new_node = list_new_node(num);
-            if (new_node == NULL) {
-                printf("Error!\n");
-                list_cleanup(l);
-                return 1;
-            }
-
-            // insert depending on order
-            if (cfg.descending_order) {
-                list_add_front(l, new_node);
-            } else {
-                list_add_back(l, new_node);
+        for (size_t i = 0; buf[i] != '\0'; i++) {
+            if (isdigit((unsigned char)buf[i])) {
+                num = num * 10 + (buf[i] - '0');
+                reading = true;
+            } else if (reading) {
+                error |= add_number(l, num, cfg.descending_order);
+                num = 0;
+                reading = false;
             }
         }
     }
 
-    // always sort ascending before combine 
-    for (struct node *i = list_head(l); i != NULL; i = list_next(i)) {
-        for (struct node *j = list_next(i); j != NULL; j = list_next(j)) {
-
-            if (list_node_get_value(i) > list_node_get_value(j)) {
-                int temp = list_node_get_value(i);
-                list_node_set_value(i, list_node_get_value(j));
-                list_node_set_value(j, temp);
-            }
-        }
+    if (reading) {
+        error |= add_number(l, num, cfg.descending_order);
+    }
+    if (!error && cfg.combine) {
+        combine_pairs(l);
+    }
+    if (!error && cfg.remove_odd) {
+        remove_odd(l);
+    }
+    if (!error && cfg.zip_alternating) {
+        error = zip_halves(l);
     }
 
-    // combine adjacent nodes: replace each node with sum of itself + next
-    if (cfg.combine) {
-
-        struct node *curr = list_head(l);
-
-        while (curr != NULL && list_next(curr) != NULL) {
-
-            struct node *next = list_next(curr);
-
-            int sum = list_node_get_value(curr) + list_node_get_value(next);
-            list_node_set_value(curr, sum);
-
-            list_unlink_node(l, next);
-            free(next);
-
-            curr = list_next(curr);
-        }
+    if (error) {
+        fprintf(stderr, "out of memory\n");
+        list_cleanup(l);
+        return 1;
     }
 
-    // no output needed for -z
-
-    // print final list 
-    print(l);
-
-    // free list
+    print_list(l);
     list_cleanup(l);
     return 0;
 }
