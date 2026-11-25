@@ -1,3 +1,7 @@
+/* lookup: index of all words in a file
+ * prints the line numbers of the first word of each stdin line
+ * -t: timing tests
+ */
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,20 +14,15 @@
 
 #define LINE_LENGTH 4096
 
-#define TABLE_START_SIZE 256
+#define TABLE_START_SIZE 65536
 #define MAX_LOAD_FACTOR 0.6
-#define HASH_FUNCTION hash_too_simple
+#define HASH_FUNCTION djb2_hash
 
-#define START_TESTS 2
-#define MAX_TESTS 2
-#define HASH_TESTS 1
+#define START_TESTS 3
+#define MAX_TESTS 3
+#define HASH_TESTS 3
 
-/* Replace every non-ascii char with a space and lowercase every char
-
-   line: string to clean up
-
-   modifies the string
-*/
+/* Replace every non-ascii char with a space and lowercase every char. */
 static void cleanup_string(char *line) {
     for (char *c = line; *c != '\0'; c++) {
         *c = (char) tolower(*c);
@@ -53,14 +52,7 @@ static char *calc_delim(void) {
 }
 
 /* Creates a hash table with a word index for the specified file and
- * parameters
-
-   filename: name of the file to read words from
-   start_size: initial capacity of the hash table
-   max_load: maximum load factor of the hash table
-   hash_func: pointer to hash function to use
-
-   returns: pointer to created hash table, or NULL on failure
+ * parameters. Return a pointer to hash table or NULL if an error occured.
  */
 static struct table *create_from_file(char *filename,
                                unsigned long start_size,
@@ -83,9 +75,9 @@ static struct table *create_from_file(char *filename,
         return NULL;
     }
 
-    unsigned long line_number = 0;  // Track line numbers
+    unsigned long line_number = 0;
     while (fgets(line, LINE_LENGTH, fp)) {
-        line_number++;              // Increment BEFORE processing
+        line_number++;
         cleanup_string(line);
 
         char *delim = calc_delim();
@@ -98,7 +90,7 @@ static struct table *create_from_file(char *filename,
 
         char *word = strtok(line, delim);
         while (word != NULL) {
-            if (table_insert(hash_table, word, (int)line_number) != 0) {  // Store line number
+            if (table_insert(hash_table, word, (int)line_number) != 0) {
                 free(delim);
                 table_cleanup(hash_table);
                 fclose(fp);
@@ -117,11 +109,7 @@ static struct table *create_from_file(char *filename,
 }
 
 /* Reads words from stdin and prints line lookup results per word.
-
-   hash_table: pointer to hash table to lookup words in
-
-   returns: 0 on success, 1 on failure
- */
+ * Return 0 if succesful and 1 on failure. */
 static int stdin_lookup(struct table *hash_table) {
     char *line = malloc(LINE_LENGTH * sizeof(char));
     if (!line) {
@@ -132,32 +120,34 @@ static int stdin_lookup(struct table *hash_table) {
         cleanup_string(line);
 
         char *word = strtok(line, " \n");
-        while (word != NULL) {
-            struct array *result = table_lookup(hash_table, word);
-            if (result == NULL) {
-                printf("Word '%s' not found in table.\n", word);
-            } else {
-                printf("%s\n", word);  // Print word first
-                for (unsigned long i = 0; i < array_size(result); i++) {
-                    printf("* %d\n", array_get(result, i));  // Print line numbers
-                }
-            }
-            word = strtok(NULL, " \n");
-            printf("\n");
+        if (word == NULL) {
+            continue;
         }
+
+        printf("%s\n", word);
+        struct array *result = table_lookup(hash_table, word);
+        for (unsigned long i = 0; i < array_size(result); i++) {
+            printf("* %d\n", array_get(result, i));
+        }
+        printf("\n");
     }
     free(line);
     return 0;
 }
 
-/* Test timed construction of hash tables with different parameters
-
-   filename: name of the file to read words from
-*/
+/* build the table with different parameters and time it */
 static void timed_construction(char *filename) {
-    unsigned long start_sizes[START_TESTS] = { 2, 65536 };
-    double max_loads[MAX_TESTS] = { 0.2, 1.0 };
-    unsigned long (*hash_funcs[HASH_TESTS])(const unsigned char *) = { hash_too_simple };
+    /* Here you can edit the hash table testing parameters: Starting size,
+     * maximum load factor and hash function used, and see the the effect
+     * on the time it takes to build the table.
+     * You can edit the tested values in the 3 arrays below. If you change
+     * the number of elements in the array, change the defined constants
+     * at the top of the file too, to change the size of the arrays. */
+    unsigned long start_sizes[START_TESTS] = { 2, 1024, 65536 };
+    double max_loads[MAX_TESTS] = { 0.2, 0.6, 1.0 };
+    unsigned long (*hash_funcs[HASH_TESTS])(const unsigned char *) = {
+        hash_too_simple, fnv1a_hash, djb2_hash
+    };
 
     for (int i = 0; i < START_TESTS; i++) {
         for (int j = 0; j < MAX_TESTS; j++) {
@@ -176,13 +166,6 @@ static void timed_construction(char *filename) {
     }
 }
 
-/* Main function
-
-   argc: number of command line arguments
-   argv: array of command line argument strings
-
-   returns: EXIT_SUCCESS on success, EXIT_FAILURE on failure
-*/
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         printf("usage: %s text_file [-t]\n", argv[0]);
